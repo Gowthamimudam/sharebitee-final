@@ -1,0 +1,6 @@
+{
+  "name": "ShareBite - Surplus Food Donation Network",
+  "description": "Smart real-time surplus food rescue network connecting food donors, NGOs, and volunteer couriers with intelligent rescue prioritization and multi-receiver matching.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
