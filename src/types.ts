@@ -42,6 +42,7 @@ export type DonationStatus =
   | 'IN_TRANSIT'
   | 'DELIVERED'
   | 'COMPLETED'
+  | 'CLOSED'
   | 'EXPIRED'
   | 'CANCELLED';
 

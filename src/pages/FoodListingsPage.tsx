@@ -38,8 +38,27 @@ export const FoodListingsPage: React.FC = () => {
     'Packaged Goods',
     'Dairy & Grocery'
   ];
+const getRemainingServings = (donation: Donation) => {
+  const totalAllocated =
+    donation.allocations?.reduce(
+      (sum, allocation) =>
+        sum + (allocation.servingsAllocated || 0),
+      0
+    ) || 0;
 
-  const filteredDonations = donations.filter((donation) => {
+  return Math.max(
+    0,
+    donation.servings - totalAllocated
+  );
+};
+  
+  
+    const filteredDonations = donations.filter((donation) => {
+  if (donation.status === 'CLOSED') {
+    return false;
+  }
+
+  // existing code...
     if (selectedCategory !== 'ALL' && donation.category !== selectedCategory) {
       return false;
     }
@@ -63,8 +82,14 @@ export const FoodListingsPage: React.FC = () => {
   const handleAcceptFull = (donation: Donation) => {
     // If current user is NGO, use their ID, otherwise fallback to first registered NGO
     const ngoId = currentUser?.role === 'NGO' ? currentUser.id : (ngos[0]?.id || 'registered-ngo');
-    acceptDonationAllocation(donation.id, ngoId, donation.servings);
-    setFeedbackToast(`Successfully accepted all ${donation.servings} meals from ${donation.foodName}! Courier dispatched.`);
+   acceptDonationAllocation(
+  donation.id,
+  ngoId,
+  getRemainingServings(donation)
+);
+    setFeedbackToast(
+  `Successfully accepted all ${getRemainingServings(donation)} meals from ${donation.foodName}! Courier dispatched.`
+);
     setTimeout(() => setFeedbackToast(null), 4000);
   };
 
@@ -275,7 +300,9 @@ export const FoodListingsPage: React.FC = () => {
                   {/* Specs Pill Grid */}
                   <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-800 text-center text-xs">
                     <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60">
-                      <div className="font-bold text-slate-900 dark:text-white">{donation.servings}</div>
+                      <div className="font-bold text-slate-900 dark:text-white">
+  {getRemainingServings(donation)}
+</div>
                       <div className="text-[10px] text-slate-400">Servings</div>
                     </div>
                     <div className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60">

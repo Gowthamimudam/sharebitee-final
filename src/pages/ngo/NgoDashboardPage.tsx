@@ -78,9 +78,34 @@ export const NgoDashboardPage: React.FC<{
       </div>
     );
   }
+  
+  const getRemainingServings = (donation: Donation) => {
+  const totalAllocated =
+    donation.allocations?.reduce(
+      (sum, allocation) =>
+        sum + (allocation.servingsAllocated || 0),
+      0
+    ) || 0;
+
+  return Math.max(
+    0,
+    donation.servings - totalAllocated
+  );
+};
 
   // Donations matching this NGO
-  const availableSurplus = donations.filter((d) => d.status === 'POSTED' || d.status === 'MATCHING');
+ const availableSurplus = donations.filter((d) => {
+  if (d.status === 'CLOSED') return false;
+
+  const remaining = getRemainingServings(d);
+
+  return (
+    remaining > 0 &&
+    (d.status === 'POSTED' ||
+      d.status === 'MATCHING' ||
+      d.status === 'VOLUNTEER_ASSIGNED')
+  );
+});
   const incomingDonations = donations.filter(
     (d) =>
       (d.status === 'ACCEPTED' ||
@@ -96,10 +121,22 @@ export const NgoDashboardPage: React.FC<{
   );
 
   const handleAcceptFull = (donation: Donation) => {
-    acceptDonationAllocation(donation.id, currentNgo.id, donation.servings);
-    setSavedSuccessToast(`Accepted all ${donation.servings} meals from ${donation.foodName}! Courier notified.`);
-    setTimeout(() => setSavedSuccessToast(null), 4000);
-  };
+  const remaining = getRemainingServings(donation);
+
+  if (remaining <= 0) return;
+
+  acceptDonationAllocation(
+    donation.id,
+    currentNgo.id,
+    remaining
+  );
+
+  setSavedSuccessToast(
+    `Accepted all ${remaining} meals from ${donation.foodName}! Courier notified.`
+  );
+
+  setTimeout(() => setSavedSuccessToast(null), 4000);
+};
 
   const handleConfirmPortion = () => {
     if (!portionModalDonation) return;
@@ -307,7 +344,7 @@ export const NgoDashboardPage: React.FC<{
 
                       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 pt-1">
                         <span className="font-semibold text-slate-900 dark:text-white font-mono">
-                          {donation.servings} Servings Available
+                        {getRemainingServings(donation)} Servings Available
                         </span>
                         <span>•</span>
                         <span className="flex items-center gap-1 font-mono text-amber-600">
@@ -326,7 +363,9 @@ export const NgoDashboardPage: React.FC<{
                       <button
                         onClick={() => {
                           setPortionModalDonation(donation);
-                          setPortionAmount(Math.min(40, donation.servings));
+                         setPortionAmount(
+  Math.min(40, getRemainingServings(donation))
+);
                         }}
                         className="flex-1 py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer"
                       >
@@ -338,7 +377,7 @@ export const NgoDashboardPage: React.FC<{
                         onClick={() => handleAcceptFull(donation)}
                         className="py-2 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors cursor-pointer"
                       >
-                        Accept All ({donation.servings})
+                       Accept All ({getRemainingServings(donation)})
                       </button>
                     </div>
                   </div>
@@ -485,13 +524,13 @@ export const NgoDashboardPage: React.FC<{
               <div className="flex justify-between text-xs font-semibold">
                 <span className="text-slate-600 dark:text-slate-300">Portion to Claim:</span>
                 <span className="text-blue-600 dark:text-blue-400 font-bold font-mono text-sm">
-                  {portionAmount} of {portionModalDonation.servings} meals
+                   {portionAmount} of {getRemainingServings(portionModalDonation)} meals
                 </span>
               </div>
               <input
                 type="range"
                 min="5"
-                max={portionModalDonation.servings}
+                max={getRemainingServings(portionModalDonation)}
                 step="5"
                 value={portionAmount}
                 onChange={(e) => setPortionAmount(Number(e.target.value))}

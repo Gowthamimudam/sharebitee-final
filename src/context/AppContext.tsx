@@ -700,24 +700,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     // Calculate initial smart matches
-    const matches = matchDonationToReceivers(newDonation, ngos);
-    if (matches.length > 0) {
-      // Auto-suggest initial allocation for top matched NGO
-      const topMatch = matches[0];
-      const allocServings = Math.min(newDonation.servings, topMatch.receiver.capacity);
-      newDonation.allocations = [
-        {
-          receiverId: topMatch.receiver.id,
-          receiverName: topMatch.receiver.name,
-          servingsAllocated: allocServings,
-          status: 'PENDING',
-          distanceKm: topMatch.distanceKm,
-          contactPhone: topMatch.receiver.phone,
-          address: topMatch.receiver.address
-        }
-      ];
-      newDonation.totalAllocated = allocServings;
-    }
+   // Calculate matches only for recommendation purposes.
+// IMPORTANT: matching must NOT consume or allocate food quantity.
+const matches = matchDonationToReceivers(newDonation, ngos);
+
+newDonation.allocations = [];
+newDonation.totalAllocated = 0;
 
     setDonations((prev) => [newDonation, ...prev]);
 
@@ -772,119 +760,248 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // NGO Acceptance
-  const acceptDonationAllocation = (donationId: string, receiverId: string, servingsRequested?: number) => {
-    const donation = donations.find((d) => d.id === donationId);
-    const ngo = ngos.find((n) => n.id === receiverId);
-    if (!donation || !ngo) return;
+ // NGO Acceptance
+const acceptDonationAllocation = (
+  donationId: string,
+  receiverId: string,
+  servingsRequested?: number
+) => {
+  const donation = donations.find((d) => d.id === donationId);
+  const ngo = ngos.find((n) => n.id === receiverId);
 
-    const acceptedServings = servingsRequested || donation.servings;
+  if (!donation || !ngo) return;
 
-    // Update donation allocation status
-    setDonations((prev) =>
-      prev.map((d) => {
-        if (d.id !== donationId) return d;
-        let existing = d.allocations.find((a) => a.receiverId === receiverId);
-        let updatedAllocs = [...d.allocations];
-        if (existing) {
-          updatedAllocs = updatedAllocs.map((a) =>
-            a.receiverId === receiverId
-              ? { ...a, status: 'ACCEPTED', servingsAllocated: acceptedServings }
-              : a
-          );
-        } else {
-          updatedAllocs.push({
-            receiverId: ngo.id,
-            receiverName: ngo.name,
-            servingsAllocated: acceptedServings,
-            status: 'ACCEPTED',
-            distanceKm: 2.4,
-            contactPhone: ngo.phone,
-            address: ngo.address
-          });
-        }
-        return {
-          ...d,
-          allocations: updatedAllocs,
-          totalAllocated: updatedAllocs.reduce((sum, a) => sum + a.servingsAllocated, 0),
-          status: 'VOLUNTEER_ASSIGNED',
-          updatedAt: new Date().toISOString()
-        };
-      })
-    );
+  // Calculate how much has already been accepted.
+  const currentTotalAllocated = donation.allocations.reduce(
+    (sum, allocation) =>
+      sum + (allocation.servingsAllocated || 0),
+    0
+  );
 
-    // Create or update corresponding pickup mission
-    const existingMission = missions.find((m) => m.donationId === donationId);
-    if (!existingMission) {
-      // Find active collectors prioritized by same area & proximity
-      const collectorMatches = matchDonationToCollectors(donation, volunteers);
-      const topMatch = collectorMatches[0];
-      const assignedVol = topMatch?.collector || volunteers[0];
-      const dist = topMatch?.distanceKm || 2.4;
-      const eta = Math.max(8, Math.round(dist * 3.5));
+  // Calculate the CURRENT remaining quantity.
+  const remainingServings = Math.max(
+    0,
+    donation.servings - currentTotalAllocated
+  );
 
-      const newMission: PickupMission = {
-        id: 'mission-' + Date.now(),
-        donationId: donation.id,
-        foodName: donation.foodName,
-        servings: acceptedServings,
-        donorName: donation.donorName,
-        donorAddress: donation.pickupLocation || donation.location || 'Nizamabad',
-        donorPhone: donation.donorPhone,
-        donorCoordinates: { lat: donation.latitude, lng: donation.longitude },
-        receiverId: ngo.id,
-        receiverName: ngo.name,
-        receiverAddress: ngo.address,
-        receiverPhone: ngo.phone,
-        receiverCoordinates: { lat: ngo.latitude, lng: ngo.longitude },
-        volunteerId: assignedVol?.id,
-        volunteerName: assignedVol?.name,
-        volunteerPhone: assignedVol?.phone,
-        stage: 'VOLUNTEER_ASSIGNED',
-        distanceKm: dist,
-        etaMinutes: eta,
-        pickupTimeScheduled: `Within ${Math.max(15, eta + 5)} minutes`,
-        notes: `Handle ${donation.packaging.toLowerCase()} with care. Storage: ${donation.storageCondition}.`
-      };
-      setMissions((prev) => [newMission, ...prev]);
+  // Accept requested amount, or all remaining amount.
+  const requested =
+    servingsRequested ?? remainingServings;
 
-      // Update donation with assigned volunteer
-      setDonations((prev) =>
-        prev.map((d) =>
-          d.id === donationId
-            ? {
-                ...d,
-                assignedVolunteerId: assignedVol?.id,
-                assignedVolunteerName: assignedVol?.name,
-                updatedAt: new Date().toISOString()
-              }
-            : d
-        )
-      );
-    } else {
-      setMissions((prev) =>
-        prev.map((m) =>
-          m.donationId === donationId
-            ? { ...m, stage: 'VOLUNTEER_ASSIGNED', receiverName: ngo.name }
-            : m
-        )
-      );
-    }
+  // Validate the requested quantity.
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return;
+  }
 
-    addNotification({
-      recipientRole: 'DONOR',
-      title: 'Allocation Accepted by NGO',
-      message: `${ngo.name} accepted ${acceptedServings} meals from "${donation.foodName}". Courier assigned.`,
-      type: 'success'
-    });
+  // Never allow accepting more than what remains.
+  if (requested > remainingServings) {
+    return;
+  }
 
-    addNotification({
-      recipientRole: 'VOLUNTEER',
-      title: 'New Rescue Mission Assigned',
-      message: `Pickup mission ready: Collect ${acceptedServings} meals from ${donation.donorName} for ${ngo.name}.`,
-      type: 'mission'
-    });
+  const acceptedServings = requested;
+
+  // Create a NEW allocation for this acceptance.
+  // Do NOT overwrite previous allocations.
+  const newAllocation: DonationAllocation = {
+    receiverId: ngo.id,
+    receiverName: ngo.name,
+    servingsAllocated: acceptedServings,
+    status: 'ACCEPTED',
+    distanceKm: calculateDistanceKm(
+      donation.latitude,
+      donation.longitude,
+      ngo.latitude,
+      ngo.longitude
+    ),
+    contactPhone: ngo.phone,
+    address: ngo.address
   };
 
+  const updatedAllocations = [
+    ...donation.allocations,
+    newAllocation
+  ];
+
+  const newTotalAllocated = updatedAllocations.reduce(
+    (sum, allocation) =>
+      sum + (allocation.servingsAllocated || 0),
+    0
+  );
+
+  const newRemainingServings = Math.max(
+    0,
+    donation.servings - newTotalAllocated
+  );
+
+  // Update the donation.
+  setDonations((prev) =>
+    prev.map((d) => {
+      if (d.id !== donationId) return d;
+
+      return {
+        ...d,
+        allocations: updatedAllocations,
+        totalAllocated: newTotalAllocated,
+
+        // Completely accepted = CLOSED.
+        // Otherwise it remains available.
+        status:
+          newRemainingServings === 0
+            ? 'CLOSED'
+            : 'VOLUNTEER_ASSIGNED',
+
+        updatedAt: new Date().toISOString()
+      };
+    })
+  );
+
+  // Find a volunteer for THIS accepted portion.
+  const collectorMatches = matchDonationToCollectors(
+    donation,
+    volunteers
+  );
+
+  const topMatch = collectorMatches[0];
+
+  const assignedVol =
+    topMatch?.collector || volunteers[0];
+
+  const dist =
+    topMatch?.distanceKm ??
+    calculateDistanceKm(
+      donation.latitude,
+      donation.longitude,
+      ngo.latitude,
+      ngo.longitude
+    );
+
+  const eta = Math.max(
+    8,
+    Math.round(dist * 3.5)
+  );
+
+  // Create a NEW mission for THIS acceptance.
+  //
+  // Example:
+  // Original = 100
+  // NGO accepts 30 -> mission for 30
+  // NGO accepts 20 -> another mission for 20
+  // Remaining = 50
+  const newMission: PickupMission = {
+    id:
+      'mission-' +
+      Date.now() +
+      '-' +
+      Math.random().toString(36).slice(2, 8),
+
+    donationId: donation.id,
+
+    // Only the accepted portion belongs to this mission.
+    foodName: donation.foodName,
+    servings: acceptedServings,
+
+    donorName: donation.donorName,
+    donorAddress:
+      donation.pickupLocation ||
+      donation.location ||
+      'Nizamabad',
+    donorPhone: donation.donorPhone,
+
+    donorCoordinates: {
+      lat: donation.latitude,
+      lng: donation.longitude
+    },
+
+    receiverId: ngo.id,
+    receiverName: ngo.name,
+    receiverAddress: ngo.address,
+    receiverPhone: ngo.phone,
+
+    receiverCoordinates: {
+      lat: ngo.latitude,
+      lng: ngo.longitude
+    },
+
+    volunteerId: assignedVol?.id,
+    volunteerName: assignedVol?.name,
+    volunteerPhone: assignedVol?.phone,
+
+    stage: 'VOLUNTEER_ASSIGNED',
+
+    distanceKm: dist,
+    etaMinutes: eta,
+
+    pickupTimeScheduled:
+      `Within ${Math.max(15, eta + 5)} minutes`,
+
+    notes:
+      `Handle ${donation.packaging.toLowerCase()} with care. ` +
+      `Storage: ${donation.storageCondition}.`
+  };
+
+  // Always create a new mission for every acceptance.
+  setMissions((prev) => [
+    newMission,
+    ...prev
+  ]);
+
+  // Update assigned volunteer information.
+  if (assignedVol) {
+    setDonations((prev) =>
+      prev.map((d) =>
+        d.id === donationId
+          ? {
+              ...d,
+              assignedVolunteerId: assignedVol.id,
+              assignedVolunteerName: assignedVol.name,
+              assignedVolunteerPhone: assignedVol.phone,
+              updatedAt: new Date().toISOString()
+            }
+          : d
+      )
+    );
+  }
+
+  // Notify donor.
+  addNotification({
+    recipientId: donation.donorId,
+    recipientRole: 'DONOR',
+    title: 'Allocation Accepted by NGO',
+    message:
+      `${ngo.name} accepted ${acceptedServings} meals from ` +
+      `"${donation.foodName}". ` +
+      `${newRemainingServings} servings remain available.`,
+    type: 'success',
+    actionUrl: '/my-donations'
+  });
+
+  // Notify NGO.
+  addNotification({
+    recipientId: ngo.id,
+    recipientRole: 'NGO',
+    title: 'Food Accepted',
+    message:
+      `You accepted ${acceptedServings} servings of ` +
+      `"${donation.foodName}".`,
+    type: 'success',
+    actionUrl: '/pickups'
+  });
+
+  // Notify volunteer only if one exists.
+  if (assignedVol) {
+    addNotification({
+      recipientId: assignedVol.id,
+      recipientRole: 'VOLUNTEER',
+      title: 'New Rescue Mission Assigned',
+      message:
+        `Pickup mission ready: Collect ${acceptedServings} ` +
+        `meals from ${donation.donorName} for ${ngo.name}.`,
+      type: 'mission',
+      actionUrl: '/missions'
+    });
+  }
+};
+ 
   const updateNgoProfile = (ngoId: string, updates: Partial<ReceiverNGO>) => {
     setNgos((prev) => prev.map((n) => (n.id === ngoId ? { ...n, ...updates } : n)));
   };
